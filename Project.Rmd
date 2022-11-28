@@ -1,0 +1,458 @@
+---
+title: "Project"
+author: "Paul Tuck"
+output:
+  word_document: default
+  html_notebook: default
+---
+# Needed packages
+
+```{r}
+library("ggplot2")
+library(rpart)
+library(rpart.plot)
+library(dplyr)
+library(factoextra)
+library(rattle)
+library(caret)
+library(caretEnsemble)
+library(e1071)
+library(cluster)
+```
+
+Fist, lets load and inspect the data
+```{r}
+setwd("C:/Users/17405/Downloads")
+StrikesFull <- read.csv("database.csv", na.strings = c("", "NA"))
+View(StrikesFull)
+dim(StrikesFull)
+```
+Data Munging
+The strikes and damage data are listed as numeric when they are binary, so they need to be changed to factors.
+```{r}
+StrikesFull$Aircraft.Damage <- as.factor(StrikesFull$Aircraft.Damage)
+StrikesFull$Radome.Strike <- as.factor(StrikesFull$Radome.Strike)
+StrikesFull$Radome.Damage <- as.factor(StrikesFull$Radome.Damage)
+StrikesFull$Windshield.Strike <- as.factor(StrikesFull$Windshield.Strike)
+StrikesFull$Windshield.Damage <- as.factor(StrikesFull$Windshield.Damage)
+StrikesFull$Nose.Strike <- as.factor(StrikesFull$Nose.Strike)
+StrikesFull$Nose.Damage <- as.factor(StrikesFull$Nose.Damage)
+StrikesFull$Engine1.Strike <- as.factor(StrikesFull$Engine1.Strike)
+StrikesFull$Engine1.Damage <- as.factor(StrikesFull$Engine1.Damage)
+StrikesFull$Engine2.Strike <- as.factor(StrikesFull$Engine2.Strike)
+StrikesFull$Engine2.Damage <- as.factor(StrikesFull$Engine2.Damage)
+StrikesFull$Engine3.Strike <- as.factor(StrikesFull$Engine3.Strike)
+StrikesFull$Engine3.Damage <- as.factor(StrikesFull$Engine3.Damage)
+StrikesFull$Engine4.Strike <- as.factor(StrikesFull$Engine4.Strike)
+StrikesFull$Engine4.Damage <- as.factor(StrikesFull$Engine4.Damage)
+StrikesFull$Engine.Ingested <- as.factor(StrikesFull$Engine.Ingested)
+StrikesFull$Propeller.Strike <- as.factor(StrikesFull$Propeller.Strike)
+StrikesFull$Propeller.Damage <- as.factor(StrikesFull$Propeller.Damage)
+StrikesFull$Wing.or.Rotor.Strike <- as.factor(StrikesFull$Wing.or.Rotor.Strike)
+StrikesFull$Wing.or.Rotor.Damage <- as.factor(StrikesFull$Wing.or.Rotor.Damage)
+StrikesFull$Fuselage.Strike <- as.factor(StrikesFull$Fuselage.Strike)
+StrikesFull$Fuselage.Damage <- as.factor(StrikesFull$Fuselage.Damage)
+StrikesFull$Landing.Gear.Strike <- as.factor(StrikesFull$Landing.Gear.Strike)
+StrikesFull$Landing.Gear.Damage <- as.factor(StrikesFull$Landing.Gear.Damage)
+StrikesFull$Tail.Strike <- as.factor(StrikesFull$Tail.Strike)
+StrikesFull$Tail.Damage <- as.factor(StrikesFull$Tail.Damage)
+StrikesFull$Lights.Strike <- as.factor(StrikesFull$Lights.Strike)
+StrikesFull$Lights.Damage <- as.factor(StrikesFull$Lights.Damage)
+StrikesFull$Other.Strike <- as.factor(StrikesFull$Other.Strike)
+StrikesFull$Other.Damage <- as.factor(StrikesFull$Other.Damage)
+```
+
+Converting other attributes as needed.
+```{r}
+StrikesFull$Engine.Make <- as.factor(StrikesFull$Engine.Make)
+StrikesFull$Engine2.Position <- as.factor(StrikesFull$Engine2.Position)
+StrikesFull$Engine4.Position <- as.factor(StrikesFull$Engine4.Position)
+StrikesFull$Species.Quantity <- as.numeric(StrikesFull$Species.Quantity)
+```
+
+Removing the ID field
+```{r}
+StrikesFull <- StrikesFull[,-1]
+```
+
+Factorising other fields (if needed)
+```{r}
+ColNum <- 1:ncol(StrikesFull)
+for (x in ColNum){
+  if (typeof(StrikesFull[,x]) == "character"){
+    StrikesFull[,x] <- as.factor(StrikesFull[,x])
+  }
+    
+}
+```
+
+```{r}
+# There are over 174,000 observations in this dataset.  We need to reduce that number, or R will run out of memory for future analyses
+percent <- .25
+set.seed(20)
+StrikesSplit <- sample(nrow(StrikesFull),nrow(StrikesFull)*percent)
+Strikes <- StrikesFull[StrikesSplit,]
+dim(Strikes)
+row.names(Strikes) <- NULL
+```
+Basic data exploration
+```{r}
+# Histogram of aircraft damage.
+ggplot(StrikesFull, aes(x = Aircraft.Damage)) + geom_bar() + ggtitle("Damaging Strikes")
+
+# It looks like the vast majority of wildlife strikes did not result in any damages.  Let's quantify that.
+noDamage <- length(which(StrikesFull$Aircraft.Damage == "0"))
+Damage <- length(which(StrikesFull$Aircraft.Damage == "1"))
+(DamagePercent <- Damage/nrow(StrikesFull))
+(NoDamagePercent <- noDamage/nrow(StrikesFull))
+```
+Only about 8.6% of wildlife strikes resuts in damages to the aircraft.
+
+Exploring what wildlife tends to strike the aircraft.
+```{r}
+ggplot(StrikesFull, aes(x = Species.Name)) + geom_bar() + ggtitle("Wildlife strikes")
+```
+Observing only the most numerous species
+```{r}
+NumStrikes <- c()
+Species <- levels(StrikesFull$Species.Name)
+for (x in Species){
+ if (length(which(StrikesFull$Species.Name == x)) >= 1000) {
+  if (length(NumStrikes) == 0){
+    NumStrikes <- c(length(which(StrikesFull$Species.Name == x)))
+    SpStrikes <- c(x)
+  }else {
+    NumStrikes <- c(NumStrikes, length(which(StrikesFull$Species.Name == x)))
+    SpStrikes <- c(SpStrikes, x)
+  }
+ }
+}
+
+SpCommonStrikes <- data.frame(SpStrikes, NumStrikes)
+
+ggplot(SpCommonStrikes, aes(x = SpStrikes, y = NumStrikes)) + geom_col() + ggtitle("Common Wildlife strikes") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+Unsurprisingly, birds are most often struck, with Mourning Dove being the most common (known) species struck.
+
+What altitude do strikes typically occur?
+```{r}
+summary(StrikesFull$Height)
+
+ggplot(StrikesFull, aes(x = Height)) + geom_histogram(bins = 7, color = "black", fill = "white") + ggtitle("Height histogram")
+```
+There is a strong right skew, with half of the strikes taking place at 50 (ft?)
+or less above the ground.
+
+Exploring what the injuries and fatalities were like.
+```{r}
+summary(StrikesFull$Fatalities)
+summary(StrikesFull$Injuries)
+# The vast majority of strikes don't have any data on injuries or fatalities 
+# (hopefully because there were none).
+# What were the records with the max number of injuries and/or fatalities.
+StrikesFull[which.max(StrikesFull$Injuries), ]
+StrikesFull[which.max(StrikesFull$Fatalities), ]
+
+# Plot of injuries
+ggplot(StrikesFull, aes(x = Injuries)) + geom_histogram(bins = 7, color = "black", fill = "white") + ggtitle("Injuries histogram")
+```
+## Question 1: What conditions of a strike is more likely to result in damage?
+
+The first thing that needs to be done is to try and construct a model that accurately predicts what conditions of a strike are more likely to result in serious damage.  We will need to be careful in constructing our algorithm, since the majority of strikes did not result in any damage, and just predicting "0" every time will give us over 90% accuracy.
+But first, we should separate the specific damage data from the dataset, since it's redundant.
+```{r}
+# Creating a backup
+Backup <- Strikes
+
+Strikes <- Strikes[,c(1:50, 52:65, 51)] # Reordering the columns so that Engine.Ingested is the last column (ensures strike columns are odd while damage columns are even)
+StrikeCond <- Strikes[,1:36]
+StrikeDamage <- data.frame(c(1:which.max(row.names(Strikes))))
+I <- c(37:65) # Columns that need to be checked.
+Damage <- c()
+Condition <- c()
+Init <- colnames(StrikeCond)
+# The damage columns need to be removed, while keeping the strike columns.  Thankfully, the former column numbers are even, while the latter are odd.
+for (x in I){
+  if (x %% 2 == 0){
+    StrikeDamage <- data.frame(StrikeDamage, Strikes[,x])
+    Damage <- c(Damage, colnames(Strikes[x]))
+  }else{
+    StrikeCond <- data.frame(StrikeCond, Strikes[,x])
+    Condition <- c(Condition, colnames(Strikes[x]))
+  }
+}
+StrikeDamage <- StrikeDamage[,-1]
+colnames(StrikeDamage) <- Damage
+colnames(StrikeCond) <- c(Init, Condition)
+```
+
+One final look at the structure of the data before we make any changes.
+
+```{r}
+str(StrikeCond)
+str(StrikeDamage)
+```
+Since the main purpose of this project is to try and predict which attributes of a strike are more likely to result in damage, out models should disregard any fields that are likely the results of the damage, such as any injuries ore fatalities.
+```{r}
+StrikeCond <- StrikeCond[,-33]
+StrikeCond <- StrikeCond[,-33]
+StrikeCond <- StrikeCond[,-33]
+
+# Species ID should also be removed, since we have the species name.  The warning.issued column is also more likely a result of damage.
+StrikeCond <- StrikeCond[,-30]
+StrikeCond <- StrikeCond[,-23]
+
+# Year and day of incident will be removed, since these attributes will not yield any interesting insights.  Month, however, will stay, since seasonal differences might make a difference.
+StrikeCond <- StrikeCond[,-1]
+StrikeCond <- StrikeCond[,-2]
+
+# Airport and operator ID are likely to result in the same problems as species ID
+StrikeCond <- StrikeCond[,-2]
+StrikeCond <- StrikeCond[,-16]
+```
+
+Descretizing the height variable will help improve the models.  While deciding how to break up the data will be tricky, since there is a strong right-skew to the data.
+```{r}
+summary(StrikeCond$Height)
+# However, we will need the height variable to be continuous for the clustering algorithm, so we should create a backup with the continuous data.
+Backup2 <- StrikeCond
+
+# Bins for descritization: 0-99; 100-999; 1000-5000; 5000-9999; >= 10000
+StrikeCond$Height <- cut(StrikeCond$Height, breaks = c(0, 100, 1000, 5000, 10000, Inf), labels = c("0-99", "100-999", "1000-4999", "5000-9999", ">=10000"))
+
+str(StrikeCond$Height)
+
+# Looking at what the descritized height data looks like.
+ggplot(data = subset(StrikeCond, !is.na(Height)), aes(x = Height)) + geom_bar() + ggtitle("Height of Strikes")
+```
+Now the data is ready to start building some models.  The first model that will be built is a decision tree.
+
+## Decision Tree
+The first model that will be evaluated will be the decision tree.  Since there are over 174,000 observations in this dataset, we will use a holdout test.
+```{r}
+trainRatio <- .60
+set.seed(20) 
+sample <- sample.int(n = nrow(StrikeCond), size = floor(trainRatio*nrow(StrikeCond)), replace = FALSE)
+train <- StrikeCond[sample, ]
+test <- StrikeCond[-sample, ]
+# train / test ratio
+length(sample)/nrow(StrikeCond)
+```
+Creating the decision tree
+```{r}
+set.seed(20)
+tree.cond <- rpart(Aircraft.Damage ~ ., data = train, method = "class", na.action = na.pass)
+summary(tree.cond)
+fancyRpartPlot(tree.cond)
+```
+The decision tree identified the species name as the most important attribute for predicting whether a strike will result in damage.
+Applying the decision tree to the test data.
+```{r}
+tree.damage.pred <- data.frame(predict(tree.cond, test))
+
+# Since the prediction assigns probabilities that there was damage or not, the predicted value (0 or 1) needs to be assigned.
+K <- c(1:nrow(tree.damage.pred))
+P <- c()
+for (x in K){
+  if(tree.damage.pred[x,1] > 0.5){
+    P <- c(P, 0)}
+  else {
+    P <- c(P, 1)
+  }
+}
+
+tree.damage.pred$pred <- as.factor(P)
+
+# Confusion matrix
+(tree.damage.conf <- confusionMatrix(tree.damage.pred$pred, test$Aircraft.Damage))
+```
+Unfortunately, it looks like this model is struggling to detect when a strike is likely to result in damage (only 33% of damaging strikes were detected).  The model might be too generic, and a more complicated model will likely need to be constructed.
+
+# Naive Bayes
+```{r}
+set.seed(20)
+nb.cond <- naiveBayes(Aircraft.Damage ~., data = train, laplace = 1, na.action = na.pass)
+summary(nb.cond)
+```
+# Naive Bayes prediction
+```{r}
+nb.damage.pred <- data.frame(predict(nb.cond, test))
+(nb.damage.conf <- confusionMatrix(nb.damage.pred$predict.nb.cond..test., test$Aircraft.Damage))
+```
+The naive Bayes model fared better at predicting damaging strikes, correctly identifying 50% of the damaging strikes.
+
+# SVM, knn, and random forest
+Unfortunately, since this dataset has so many NA's, SVM, knn, and rf will be difficult to implement with the entire dataset.  However, they may still be used by modeling the strike data alone, and determine whether certain parts of the plane that are struck are more likely to cause damage to the aircraft.
+Even with this, knn did not work with this dataset, so only svm and random forest were analyzed.  
+```{r}
+defaultW <- getOption("warn") 
+options(warn = -1) 
+
+# Preparing data
+#Ptrain <- train[,27:42]
+#Ptest <- test[,27:42]
+
+#set.seed(20)
+#SVM.cond <- train(Aircraft.Damage ~ ., data = Ptrain, method = "svmRadial", na.action = na.omit)
+#set.seed(20)
+#rf.cond <- train(Aircraft.Damage ~ ., data = Ptrain, method = "rf", na.action = na.omit)
+
+# WARNING: these models took a very long time to produce (around an hour). They have been commented out to save time knitting this document.
+options(warn = defaultW)
+```
+
+# Model predictions
+```{r}
+#SVM.damage.pred <- data.frame(predict(SVM.cond, test))
+#rf.damage.pred <- data.frame(predict(rf.cond, test))
+
+#(SVM.damage.conf <- confusionMatrix(SVM.damage.pred$predict.SVM.cond..test., test$Aircraft.Damage))
+#(rf.damage.conf <- confusionMatrix(rf.damage.pred$predict.rf.cond..test., test$Aircraft.Damage))
+
+# See above warning.
+```
+Neither svm nor random forest performed well in terms of predicting damaging strikes, only predicting 11% and 9% of damaging strikes, respectively.  These analyses might not be appropriate for this particular for this particular question.
+
+## K-means clustering
+Now to perform a clustering algorithm to see if damaging strikes fall into seperate clusters.
+```{r}
+# Returning our height variable to continuous data
+sum(is.na(StrikeCond))
+# Unfortunately, there are a lot of NA's in this dataset, which kmeans can't handle, and removing them from the dataset will likely make us lose too much data.  However, using only the data of which part of the plane was struck, we can avoid this problem.
+PStrikeCond <- StrikeCond[,27:42]
+sum(is.na(PStrikeCond))
+
+# Run k-means
+set.seed(20)
+Clusters <- kmeans(PStrikeCond[,2:16], 8) # Don't want to include the attribute we are trying to predict in the algorithm.
+PStrikeCond$cluster <- as.factor(Clusters$cluster)  
+ggplot(data = PStrikeCond, aes(x = Aircraft.Damage, fill = cluster)) + geom_bar(stat = "count") + labs(title = "Damage")
+```
+There does not seem to be any cluster that can accurately identify whether a strike will result in damage or not, and there does not seem to be any particular part of the aircraft that would be more likely to cause damage to the aircraft than any other.
+
+## Strikes Resulting in Injury
+
+The next task will be to try and predict which strikes are the most dangerous to those in the aircraft.  The same methods as before will be utilized, but instead predicting which strikes result in injuries or deaths on the aircraft.
+
+# Data preperation
+```{r}
+length(which(StrikesFull$Injuries > 0 | StrikesFull$Fatalities > 0))/nrow(StrikesFull)
+
+# Since very few strikes result in injuries or death, it might be prudent to trim the data a bit by removing those strikes that did not result in any damage, since they are unlikely to result in any injuries.
+
+Damage <- which(StrikesFull$Aircraft.Damage == "1")
+StrikesD <- StrikesFull[Damage,]
+
+# Did this result in us losing any strikes resulting in injury or death?
+length(which(StrikesFull$Injuries > 0 | StrikesFull$Fatalities > 0))
+length(which(StrikesD$Injuries > 0 | StrikesD$Fatalities > 0))
+
+# Unfortunately, most of the strikes that resulted in injury or death were removed using this method; proving the initial assumption wrong.
+
+# Separating observations with injuries or fatalities from those that don't
+Injuries <- which(StrikesFull$Injuries > 0 | StrikesFull$Fatalities > 0)
+
+# Since the goal is to predict whether a strike will result in any physical harm, a new column needs to be created to act as the predictor variable that isn't numeric.
+
+# Replacing NA's with 0's; assuming that any NA's means that there were no injuries or deaths.
+StrikesFRows <- c(1:nrow(StrikesFull))
+
+Backup3 <- StrikesFull
+
+StrikesFull[["Injuries"]][is.na(StrikesFull[["Injuries"]])] <- 0
+StrikesFull[["Fatalities"]][is.na(StrikesFull[["Fatalities"]])] <- 0
+
+# Making a separate column identifying whether a strike resulted in injury or fatality
+
+IorD <- c()
+for (x in StrikesFRows){
+  if (StrikesFull[x,]$Injuries > 0 | StrikesFull[x,]$Fatalities > 0 ){
+    IorD <- c(IorD, "1")
+  }
+  else{
+    IorD <- c(IorD, "0")
+  }
+}
+
+StrikesFull$IorD <- IorD
+length(which(StrikesFull$IorD == "1"))
+StrikesFull$IorD <- as.factor(StrikesFull$IorD)
+```
+Since the data is heavily skewed towards flights not resulting in injury, the data should be sampled to improve the ratio.
+
+```{r}
+# Separating strikes with injuries from those that don't.
+StrikesI <- StrikesFull[which(StrikesFull$IorD == "1"),]
+StrikesN <- StrikesFull[which(StrikesFull$IorD == "0"),]
+
+# Selecting 2160 of non-damaging strikes, so 10% of strikes are damaging.
+set.seed(20)
+NSample <- sample(nrow(StrikesN), 2160, replace = FALSE)
+StrikesN <- StrikesN[NSample,]
+
+# Rejoining the two data frames.
+StrikesIorD <- rbind(StrikesI, StrikesN)
+# Removing redundant columns
+StrikesIorD <- StrikesIorD[,-34]
+StrikesIorD <- StrikesIorD[,-34]
+
+# Removing redundant data
+StrikesIorD <- StrikesIorD[,-1]
+StrikesIorD <- StrikesIorD[,-2]
+StrikesIorD <- StrikesIorD[,-2]
+StrikesIorD <- StrikesIorD[,-16]
+StrikesIorD <- StrikesIorD[,-26]
+```
+
+## Injuring strikes models
+
+```{r}
+# Setting up training and test data
+trainRatio <- .60
+set.seed(20) 
+sample2 <- sample.int(n = nrow(StrikesIorD), size = floor(trainRatio*nrow(StrikesIorD)), replace = FALSE)
+trainI <- StrikesIorD[sample2, ]
+testI <- StrikesIorD[-sample2, ]
+# train / test ratio
+length(sample2)/nrow(StrikesIorD)
+
+# Decision Tree
+set.seed(20)
+tree.inj <- rpart(IorD ~ ., data = trainI, method = "class", na.action = na.pass)
+summary(tree.inj)
+fancyRpartPlot(tree.inj)
+
+# Naive Bayes
+set.seed(20)
+nb.inj <- naiveBayes(IorD ~., data = trainI, laplace = 1, na.action = na.pass)
+summary(nb.cond)
+
+## Predictions
+# Decision Tree
+tree.injury.pred <- data.frame(predict(tree.inj, testI))
+
+K2 <- c(1:nrow(tree.injury.pred))
+P2 <- c()
+for (x in K2){
+  if(tree.injury.pred[x,1] > 0.5){
+    P2 <- c(P2, 0)}
+  else {
+    P2 <- c(P2, 1)
+  }
+}
+
+tree.injury.pred$pred <- as.factor(P2)
+
+# DT Confusion matrix
+(tree.injury.conf <- confusionMatrix(tree.injury.pred$pred, testI$IorD))
+
+# Naive Bayes
+nb.injury.pred <- data.frame(predict(nb.inj, testI))
+# NB Confusion Matrix
+(nb.injury.conf <- confusionMatrix(nb.injury.pred$predict.nb.inj..testI., testI$IorD))
+```
+
+
+
+
